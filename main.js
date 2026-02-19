@@ -562,13 +562,40 @@ function computeRouteSegments(coords) {
   return { segments, total };
 }
 
+// Closest point on route to a given latlng — returns { distAlong, minDistM }
+function getClosestPointOnRoute(segments, totalLength, latLng) {
+  const p = L.latLng(latLng);
+  let bestDist = Infinity;
+  let bestDistAlong = 0;
+
+  for (const seg of segments) {
+    const d = seg.distance;
+    if (d <= 0) continue;
+    const A = seg.from;
+    const B = seg.to;
+    for (let k = 0; k <= 30; k++) {
+      const t = k / 30;
+      const projLat = A.lat + t * (B.lat - A.lat);
+      const projLng = A.lng + t * (B.lng - A.lng);
+      const proj = L.latLng(projLat, projLng);
+      const distToSeg = p.distanceTo(proj);
+      const distAlong = seg.start + t * d;
+      if (distToSeg < bestDist) {
+        bestDist = distToSeg;
+        bestDistAlong = distAlong;
+      }
+    }
+  }
+  return { distAlong: bestDistAlong, minDistM: bestDist };
+}
+
 function pointAlongRoute(segments, totalLength, distance) {
   if (!segments.length) return null;
   if (distance <= 0) return segments[0].from;
   if (distance >= totalLength) return segments[segments.length - 1].to;
 
   for (const seg of segments) {
-    if (distance >= seg.start && distance <= seg.end) {
+    if (distance >= seg.start && distance <= seg.end && seg.distance > 0) {
       const ratio = (distance - seg.start) / seg.distance;
       const lat = seg.from.lat + (seg.to.lat - seg.from.lat) * ratio;
       const lng = seg.from.lng + (seg.to.lng - seg.from.lng) * ratio;
@@ -576,6 +603,102 @@ function pointAlongRoute(segments, totalLength, distance) {
     }
   }
   return segments[segments.length - 1].to;
+}
+
+// ─── ROUTE OPTIMIZATION (TSP: Nearest-Neighbor & 2-Opt) ───────
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function nearestNeighborTour(startIdx) {
+  const n = temples.length;
+  const used = new Set([startIdx]);
+  const tour = [startIdx];
+
+  while (tour.length < n) {
+    const curr = temples[tour[tour.length - 1]];
+    let best = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < n; i++) {
+      if (used.has(i)) continue;
+      const d = haversineKm(curr.lat, curr.lng, temples[i].lat, temples[i].lng);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    tour.push(best);
+    used.add(best);
+  }
+  return tour;
+}
+
+function tourLength(tour) {
+  let len = 0;
+  for (let i = 0; i < tour.length - 1; i++) {
+    const a = temples[tour[i]];
+    const b = temples[tour[i + 1]];
+    len += haversineKm(a.lat, a.lng, b.lat, b.lng);
+  }
+  len += haversineKm(
+    temples[tour[tour.length - 1]].lat, temples[tour[tour.length - 1]].lng,
+    temples[tour[0]].lat, temples[tour[0]].lng
+  );
+  return len;
+}
+
+function twoOptImprove(tour) {
+  const n = tour.length;
+  let improved = true;
+  let tourArr = [...tour];
+
+  while (improved) {
+    improved = false;
+    for (let i = 0; i < n - 1; i++) {
+      for (let j = i + 2; j < n; j++) {
+        const j1 = (j + 1) % n;
+        if (j1 === 0 && i === 0) continue;
+        const a = temples[tourArr[i]];
+        const b = temples[tourArr[i + 1]];
+        const c = temples[tourArr[j]];
+        const d = temples[tourArr[j1]];
+        const before = haversineKm(a.lat, a.lng, b.lat, b.lng) + haversineKm(c.lat, c.lng, d.lat, d.lng);
+        const after = haversineKm(a.lat, a.lng, c.lat, c.lng) + haversineKm(b.lat, b.lng, d.lat, d.lng);
+        if (after < before - 1e-9) {
+          const rev = tourArr.slice(i + 1, j + 1).reverse();
+          tourArr = [...tourArr.slice(0, i + 1), ...rev, ...tourArr.slice(j + 1)];
+          improved = true;
+          break;
+        }
+      }
+      if (improved) break;
+    }
+  }
+  return tourArr;
+}
+
+// Ramkund index (start point) – find by name
+const ramkundIdx = temples.findIndex((t) => t.name === "Ramkund");
+const nnStartIdx = ramkundIdx >= 0 ? ramkundIdx : 0;
+
+let nnTour = null;
+let twoOptTour = null;
+let nnDistKm = 0;
+let twoOptDistKm = 0;
+
+function computeOptimizedTours() {
+  nnTour = nearestNeighborTour(nnStartIdx);
+  nnDistKm = tourLength(nnTour);
+  twoOptTour = twoOptImprove(nnTour);
+  twoOptDistKm = tourLength(twoOptTour);
 }
 
 function computeBearingDeg(from, to) {
@@ -611,6 +734,8 @@ const roadLayer = L.layerGroup().addTo(map);
 const routeLayer = L.layerGroup().addTo(map);
 const roverLayer = L.layerGroup().addTo(map);
 const trailLayer = L.layerGroup().addTo(map);
+const processingLayer = L.layerGroup().addTo(map);
+const optimizedRouteLayer = L.layerGroup(); // Shown via toggle (off by default)
 
 // ─── CATEGORY MARKERS ────────────────────────────────────────
 
@@ -678,6 +803,40 @@ function createAllMarkers() {
 
 createAllMarkers();
 
+// ─── PROCESSING FACILITIES (from PDF: Pathardi Phata, Nirmalya sources) ──
+
+const processingFacilities = [
+  {
+    name: "Pathardi Phata Solid Waste Treatment Plant",
+    lat: 19.946922,
+    lng: 73.765434,
+    type: "treatment",
+    desc: "Visited 1 Sep 2025 · Nirmalya processing",
+  },
+  {
+    name: "Goda Ghat · Primary Nirmalya Collection",
+    lat: 20.007803,
+    lng: 73.792615,
+    type: "collection",
+    desc: "Key Nirmalya source · Godavari river",
+  },
+];
+
+processingFacilities.forEach((f) => {
+  const marker = L.circleMarker([f.lat, f.lng], {
+    radius: 8,
+    color: "#9333ea",
+    weight: 2,
+    fillColor: "#e9d5ff",
+    fillOpacity: 0.9,
+  }).addTo(processingLayer);
+
+  marker.bindTooltip(
+    `<strong>${f.name}</strong><br/>${f.desc}`,
+    { direction: "top", opacity: 0.95, sticky: true }
+  );
+});
+
 // ─── ROVER ROUTE & TRAIL ─────────────────────────────────────
 
 const routePolyline = L.polyline(roverPathCoords, {
@@ -692,11 +851,28 @@ const trailPolyline = L.polyline([], {
   opacity: 0.9,
 }).addTo(trailLayer);
 
-// Fit bounds to all locations
+// Optimized tour polyline (2-opt order, straight lines between temples)
+let optimizedPolyline = null;
+
+function drawOptimizedRoute() {
+  optimizedRouteLayer.clearLayers();
+  if (!twoOptTour || twoOptTour.length < 2) return;
+  const coords = twoOptTour.map((i) => [temples[i].lat, temples[i].lng]);
+  coords.push(coords[0]); // close the loop
+  optimizedPolyline = L.polyline(coords, {
+    color: "#16a34a",
+    weight: 2,
+    opacity: 0.7,
+    dashArray: "8, 8",
+  }).addTo(optimizedRouteLayer);
+}
+
+// Fit bounds to main area (temples, transport, roads) — exclude distant processing plants
 const allCoords = [
   ...temples.map((t) => [t.lat, t.lng]),
   ...transportHubs.map((t) => [t.lat, t.lng]),
   ...roadsAndJunctions.map((t) => [t.lat, t.lng]),
+  ...roverPathCoords,
 ];
 if (allCoords.length) {
   map.fitBounds(allCoords, { padding: [20, 20] });
@@ -705,11 +881,27 @@ if (allCoords.length) {
 const { segments: routeSegments, total: routeLengthMeters } =
   computeRouteSegments(roverPathCoords);
 
+let templeRouteData = null; // [{ distAlong, minDistM }, ...]
+function computeTempleRouteDistances() {
+  if (!routeSegments) return;
+  templeRouteData = temples.map((t) =>
+    getClosestPointOnRoute(routeSegments, routeLengthMeters, [t.lat, t.lng])
+  );
+}
+computeTempleRouteDistances();
+
 // ─── ROVER ANIMATION ─────────────────────────────────────────
 
-const speedKmh = 18;
-const speedMps = (speedKmh * 1000) / 3600;
 const updateIntervalMs = 150;
+
+function getSpeedKmh() {
+  const el = document.getElementById("rover-speed-select");
+  return el ? parseInt(el.value, 10) || 12 : 12;
+}
+
+function getSpeedMps() {
+  return (getSpeedKmh() * 1000) / 3600;
+}
 
 let roverDistanceMeters = 0;
 let roverTotalDistanceMeters = 0;
@@ -735,8 +927,10 @@ function initRover() {
     routeSegments,
     routeLengthMeters,
     roverDistanceMeters
-  );
+  ) || (routeSegments.length ? L.latLng(routeSegments[0].from) : null);
   roverLatLng = startPoint;
+
+  if (!startPoint) return;
 
   if (!roverMarker) {
     roverMarker = L.marker(startPoint, { icon: roverIcon }).addTo(roverLayer);
@@ -783,7 +977,7 @@ function stepRover() {
   const dtSec = (now - lastUpdateTime) / 1000;
   lastUpdateTime = now;
 
-  const stepDist = speedMps * dtSec;
+  const stepDist = getSpeedMps() * dtSec;
   roverDistanceMeters += stepDist;
   roverTotalDistanceMeters += stepDist;
 
@@ -854,10 +1048,11 @@ function updateRoverTelemetryUI() {
 
   const progress =
     routeLengthMeters > 0 ? (roverDistanceMeters / routeLengthMeters) * 100 : 0;
+  const speedKmh = getSpeedKmh();
   const remainingMeters = Math.max(routeLengthMeters - roverDistanceMeters, 0);
-  const etaSeconds = remainingMeters / speedMps;
+  const etaSeconds = remainingMeters / getSpeedMps();
 
-  speedEl.textContent = `${speedKmh.toFixed(0)} km/h`;
+  speedEl.textContent = `${speedKmh} km/h`;
   distanceEl.textContent = `${formatKm(roverTotalDistanceMeters)} km`;
   progressEl.textContent = `${progress.toFixed(1)}%`;
   etaEl.textContent = formatEta(etaSeconds);
@@ -867,6 +1062,38 @@ function updateRoverTelemetryUI() {
   } else {
     coordsEl.textContent = "–, –";
   }
+
+  updateEstimatedYield();
+}
+
+// Estimated Nirmalya yield based on temples passed (route-distance accurate)
+const KG_PER_TEMPLE = 6; // rough avg per temple visit
+const COMPOST_RATIO = 0.25; // 100–200 kg → 40 kg per PDF
+
+function updateEstimatedYield() {
+  const templesPassedEl = document.getElementById("temples-passed-text");
+  const estWasteEl = document.getElementById("est-waste-text");
+  const estCompostEl = document.getElementById("est-compost-text");
+  const estFreshenerEl = document.getElementById("est-freshener-text");
+  if (!templesPassedEl) return;
+
+  // Count only temples where route passes within 350m AND we've passed that point
+  const MAX_PASS_DISTANCE_M = 350;
+  let count = 0;
+  if (templeRouteData && templeRouteData.length === temples.length) {
+    for (let idx = 0; idx < temples.length; idx++) {
+      const { distAlong, minDistM } = templeRouteData[idx];
+      if (minDistM <= MAX_PASS_DISTANCE_M && roverDistanceMeters >= distAlong) count++;
+    }
+  }
+  const wasteKg = count * KG_PER_TEMPLE;
+  const compostKg = Math.round(wasteKg * COMPOST_RATIO);
+  const freshenerL = (count > 0 ? (wasteKg / 3 * 11).toFixed(1) : "0"); // 3 kg → ~11 L per PDF
+
+  templesPassedEl.textContent = count;
+  if (estWasteEl) estWasteEl.textContent = wasteKg;
+  if (estCompostEl) estCompostEl.textContent = compostKg;
+  if (estFreshenerEl) estFreshenerEl.textContent = freshenerL;
 }
 
 function updateTempleDistances() {
@@ -948,7 +1175,19 @@ function setupLayerToggles() {
     "toggle-transport": transportLayer,
     "toggle-roads": roadLayer,
     "toggle-route": routeLayer,
+    "toggle-processing": processingLayer,
+    "toggle-optimized": optimizedRouteLayer,
   };
+
+  const optDistEl = document.getElementById("optimized-dist");
+  if (optDistEl && twoOptDistKm > 0) {
+    optDistEl.textContent = `(${twoOptDistKm.toFixed(1)} km)`;
+  }
+
+  const nnEl = document.getElementById("nn-dist");
+  const twoOptEl = document.getElementById("twoopt-dist");
+  if (nnEl) nnEl.textContent = nnDistKm > 0 ? `${nnDistKm.toFixed(1)} km` : "–";
+  if (twoOptEl) twoOptEl.textContent = twoOptDistKm > 0 ? `${twoOptDistKm.toFixed(1)} km` : "–";
 
   for (const [id, layer] of Object.entries(toggles)) {
     const el = document.getElementById(id);
@@ -969,7 +1208,15 @@ document.getElementById("btn-start").addEventListener("click", startRover);
 document.getElementById("btn-pause").addEventListener("click", pauseRover);
 document.getElementById("btn-reset").addEventListener("click", resetRover);
 
+initRover();
 buildTempleList();
+
+try {
+  computeOptimizedTours();
+  drawOptimizedRoute();
+} catch (e) {
+  console.warn("Route optimization skipped:", e);
+}
 setupLayerToggles();
 
 // Ensure Leaflet recalculates dimensions after layout settles
