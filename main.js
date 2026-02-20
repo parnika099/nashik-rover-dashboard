@@ -1223,3 +1223,34 @@ setupLayerToggles();
 setTimeout(() => {
   map.invalidateSize();
 }, 200);
+
+// ─── Raspberry Pi stream connection state ─────────────────────
+
+(function () {
+  const STREAM_TIMEOUT_MS = 12000;
+  const overlay = document.getElementById("stream-overlay");
+  const overlayMessage = document.getElementById("stream-overlay-message");
+  const iframe = document.getElementById("stream-iframe");
+
+  if (!overlay || !iframe) return;
+
+  let resolved = false;
+
+  function showNotConnected() {
+    if (resolved) return;
+    resolved = true;
+    overlay.classList.add("offline");
+    overlay.querySelector(".stream-overlay-title").textContent = "Raspberry Pi not connected";
+    overlayMessage.textContent =
+      "Ensure the rover is on the same network and the stream is running on port 8766 (raspberrypi.local:8766).";
+    overlayMessage.setAttribute("role", "status");
+  }
+
+  const timeoutId = setTimeout(showNotConnected, STREAM_TIMEOUT_MS);
+
+  iframe.addEventListener("load", () => {
+    clearTimeout(timeoutId);
+    resolved = true;
+    overlay.classList.add("hidden");
+  }, { once: true });
+})();

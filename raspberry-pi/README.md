@@ -1,5 +1,21 @@
 # Raspberry Pi — Rover detection
 
+Rover Pi on the same network: **parnika@raspberrypi** (hostname `raspberrypi` or `raspberrypi.local`).
+
+## SSH (by IP)
+
+From your Mac (or Cursor’s terminal):
+
+```bash
+ssh parnika@192.168.1.38
+```
+
+If the Pi’s IP changes, use the hostname: `ssh parnika@raspberrypi.local`
+
+**Cursor:** Cursor’s agent/terminal runs in a sandbox that blocks network by default, so SSH can fail with “No route to host.” This repo has `.cursor/sandbox.json` with `networkPolicy.default: "allow"` so SSH from Cursor works. If you still can’t connect, run the command in your system Terminal or approve network when Cursor prompts.
+
+---
+
 Python script for the Nirmalya rover that detects:
 
 - **Obstacles** — ultrasonic (HC-SR04) distance in cm

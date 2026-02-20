@@ -89,6 +89,27 @@
           </div>
         </section>
 
+        <!-- Raspberry Pi Live Stream -->
+        <section class="card">
+          <h2>Rover Camera Stream</h2>
+          <p class="card-subtitle">Live feed from Raspberry Pi · raspberrypi.local:8766</p>
+          <div class="stream-wrap">
+            <div id="stream-overlay" class="stream-overlay" aria-live="polite">
+              <span class="stream-overlay-icon">📡</span>
+              <p class="stream-overlay-title">Connecting to stream…</p>
+              <p id="stream-overlay-message" class="stream-overlay-message"></p>
+            </div>
+            <iframe
+              id="stream-iframe"
+              src="http://raspberrypi.local:8766"
+              title="Raspberry Pi waste detection stream"
+              class="stream-iframe"
+              allow="autoplay; fullscreen"
+              allowfullscreen
+            ></iframe>
+          </div>
+        </section>
+
         <!-- Waste-to-Product Pipeline Card -->
         <section class="card">
           <h2>Waste-to-Product Pipeline</h2>
