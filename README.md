@@ -23,13 +23,7 @@ Real-time monitoring dashboard for the autonomous Nirmalya collection rover at K
 
 *Sustainable Nirmalya Management — technical architecture: spatial/IoT/analytics, chemical processing (compost, room freshener, briquettes, natural dye), and value-added outputs.*
 
----
 
-Add more screenshots in the `screenshots/` folder and reference them here, for example:
-
-```markdown
-![Description](screenshots/your-image.png)
-```
 
 ## Running the dashboard
 
